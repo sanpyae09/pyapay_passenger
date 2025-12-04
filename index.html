@@ -527,8 +527,7 @@
                 const data = snapshot.val();
                 if (data && data.timestamp && (Date.now() - data.timestamp) < 300000) {
                     if (!data.target || data.target === 'passengers' || data.target === 'all') {
-                        // FORCE TITLE TO BE PYA PAY
-                        showNotification("Pya Pay", data.message || "");
+                        showNotification(data.title || "Pyapay Announcement", data.message || "");
                         try { messageSound.play().catch(e => {}); } catch(e){}
                     }
                 }
@@ -724,17 +723,12 @@
             btn.innerText = "ဝင်ရောက်နေသည်...";
             btn.disabled = true;
 
-            // Instant UI feedback for speed
             if (Notification.permission !== "granted") await Notification.requestPermission();
-            
             try { 
                 const userCredential = await signInAnonymously(auth); 
                 passengerInfo = { name, phone }; 
-                
-                // Fire and forget update to not block UI
-                update(ref(db, `passengers/${userCredential.user.uid}`), passengerInfo).catch(console.error); 
-                
-                showNotification("မင်္ဂလာပါ", "Pyapay မှ နွေးထွေးစွာ ကြိုဆိုပါသည်");
+                await update(ref(db, `passengers/${userCredential.user.uid}`), passengerInfo); 
+                showNotification("Welcome", "Pyapay မှ ကြိုဆိုပါသည်");
                 dom.loginScreen.classList.add('hidden');
             } catch (e) { 
                 showCustomAlert("Login Error", e.message, null); 
