@@ -495,6 +495,7 @@
             initMap(); 
             setupEventListeners(); 
             setupAuthListener(); 
+            fetchSettings(); // Fetch pricing immediately
             
             const savedSound = localStorage.getItem('pyapay_passenger_sound');
             if(savedSound !== null) soundEnabled = savedSound === 'true';
@@ -527,7 +528,7 @@
                 const data = snapshot.val();
                 if (data && data.timestamp && (Date.now() - data.timestamp) < 300000) {
                     if (!data.target || data.target === 'passengers' || data.target === 'all') {
-                        showNotification(data.title || "Pyapay Announcement", data.message || "");
+                        showNotification("Pya Pay", data.message || "");
                         try { messageSound.play().catch(e => {}); } catch(e){}
                     }
                 }
@@ -607,10 +608,12 @@
                         try { await Promise.all([fetchSettings(), fetchAds(), checkForActiveTrip(user.uid)]); } catch(e) {}
                         dom.loginScreen.classList.add('hidden');
                     } else {
+                        // User exists in Auth but not in DB (incomplete signup), or new anonymous
                         dom.loginScreen.classList.remove('hidden');
                     }
                 } else {
                     currentUser = null;
+                    dom.loginScreen.classList.remove('hidden');
                 }
             });
         }
@@ -620,6 +623,7 @@
              if(snap.exists()) { 
                  const data = snap.val(); 
                  pricingSettings = { baseFare: data.baseFare || 1500, pricePerKm: data.pricePerKm || 500 }; 
+                 console.log("Pricing updated:", pricingSettings);
              }
              const contactSnap = await get(ref(db, 'settings/contact_info'));
              if(contactSnap.exists()) {
@@ -716,7 +720,8 @@
         
         async function handleLogin() { 
             if(soundEnabled) clickSound.play().catch(()=>{});
-            const name = document.getElementById('passenger-name').value; const phone = document.getElementById('passenger-phone').value; 
+            const name = document.getElementById('passenger-name').value; 
+            const phone = document.getElementById('passenger-phone').value; 
             if (!name || !phone) return showCustomAlert('ဖြည့်စွက်ရန်', 'အမည်နှင့် ဖုန်းနံပါတ် ဖြည့်စွက်ပေးပါ။', null); 
             
             const btn = dom.loginButton;
@@ -724,14 +729,23 @@
             btn.disabled = true;
 
             if (Notification.permission !== "granted") await Notification.requestPermission();
+            
             try { 
                 const userCredential = await signInAnonymously(auth); 
                 passengerInfo = { name, phone }; 
-                await update(ref(db, `passengers/${userCredential.user.uid}`), passengerInfo); 
-                showNotification("Welcome", "Pyapay မှ ကြိုဆိုပါသည်");
+                
+                // INSTANT LOGIN: Hide UI immediately before waiting for DB write
                 dom.loginScreen.classList.add('hidden');
+                
+                // Welcome Notification in Burmese
+                showNotification("မင်္ဂလာပါ", "Pyapay မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။");
+                
+                // Update DB in background
+                update(ref(db, `passengers/${userCredential.user.uid}`), passengerInfo).catch(e => console.warn("Profile sync error", e));
+                
             } catch (e) { 
-                showCustomAlert("Login Error", e.message, null); 
+                console.error(e);
+                showCustomAlert("Login Error", "အကောင့်ဝင်မရနိုင်ပါ။ အင်တာနက်စစ်ဆေးပါ။", null); 
                 btn.innerText = "စတင်အသုံးပြုမည်";
                 btn.disabled = false;
             } 
@@ -793,8 +807,12 @@
                 const distKm = (distMeters / 1000).toFixed(1); 
                 const profileSnap = await get(ref(db, `drivers/${driverId}`)); 
                 const profile = profileSnap.val() || { name: 'Unknown', carModel: 'Car', carPlate: 'N/A' }; 
-                // Strict Pricing Logic
-                const estPrice = Math.max(2000, Math.round((pricingSettings.baseFare + parseFloat(distKm) * pricingSettings.pricePerKm)/100)*100);
+                
+                // Use Admin Settings for Price Estimation
+                const base = pricingSettings.baseFare || 1500;
+                const perKm = pricingSettings.pricePerKm || 500;
+                const estPrice = Math.max(2000, Math.round((base + parseFloat(distKm) * perKm)/100)*100);
+                
                 const realTimeAvailable = loc.isAvailable === true;
                 return { id: driverId, ...profile, ...loc, isAvailable: realTimeAvailable, distKm, price: estPrice }; 
             }); 
@@ -876,10 +894,13 @@
 
         // Updated calculateFare to strictly use admin settings
         const calculateFare = (distance, vehicleType) => { 
-            const base = pricingSettings.baseFare; 
-            const perKm = pricingSettings.pricePerKm; 
+            const base = pricingSettings.baseFare || 1500; 
+            const perKm = pricingSettings.pricePerKm || 500; 
+            
             let fare = base + (distance * perKm); 
             if(dom.promoCodeInput.value.trim() !== '') fare *= 0.9; 
+            
+            // Round to nearest 100, min 2000
             return Math.max(2000, Math.round(fare / 100) * 100); 
         }
         function updateFareDisplay() { const fare = calculateFare(currentFareDetails.distance, selectedVehicleType); document.getElementById('fare-display').innerText = `${fare.toLocaleString()} Ks`; }
